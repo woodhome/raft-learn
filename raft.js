@@ -32,7 +32,7 @@ let Raft = function (transport,logStore,nodeConfig) {
 
     this.transport = transport;
     this.logStore = logStore;
-    this.term = logStore.msgTerm ;
+    this.term = logStore.lastLog().term ;
     this.role = new Follower(this);
     this.nodeConfig = nodeConfig;
     this.transport.onMessage = (from,message)=>this.role.messageReceived(from,message);
@@ -58,8 +58,9 @@ let Follower = function (raft) {
         this.timer = setTimeout(()=>follower.timeout(), Math.random() * (TIMEOUT_MAX - TIMEOUT_MIN) + base);
     };
     this.elect = (from, message) => {
-        if (message.data.term > this.raft.term && (message.data.msgTerm > this.raft.logStore.msgTerm ||
-            (message.data.msgTerm === this.raft.logStore.msgTerm && message.data.msgIndex >= this.raft.logStore.msgIndex))) {
+        let lastLog = this.raft.logStore.lastLog();
+        if (message.data.term > this.raft.term && (message.data.msgTerm > lastLog.term ||
+            (message.data.msgTerm === lastLog.term && message.data.msgIndex >= lastLog.logIndex))) {
             this.raft.transport.sendMessage(from, {
                 cmd: CMD_ELECT_RSP,
                 data: {support: 1, term: message.data.term}
@@ -68,6 +69,7 @@ let Follower = function (raft) {
             // reset timer
             clearTimeout(this.timer);
             this.startTimer(TIMEOUT_CANDIDATE);
+            console.log("address : " + this.raft.transport.address + " elect ");
         }
     };
 
@@ -165,10 +167,11 @@ let Candidate = function (raft) {
     };
     this.sendVoteRequest = (node) => {
         if(node.address === this.raft.transport.address) return;
+        let lastLog = this.raft.logStore.lastLog();
         this.raft.transport.sendMessage(node.address, {
             cmd: CMD_ELECT_REQUEST,
             data: {
-                term: this.term, msgTerm: this.raft.logStore.msgTerm, msgIndex: this.raft.logStore.msgIndex
+                term: this.term, msgTerm: lastLog.term, msgIndex: lastLog.logIndex
             }
         });
     };
