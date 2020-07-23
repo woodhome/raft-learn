@@ -12,9 +12,7 @@ let TransPort = function (address) {
 
 
     this.sendMessage = (address, message) => {
-        console.log('send message to : ' + address);
-        console.log(message);
-        setTimeout(() => transportMaps[address].onMessage(this.address, message), Math.random() * 50);
+        setTimeout(() => transportMaps[address].onMessage(this.address, message), Math.random() * 10);
     };
 };
 exports.TransPort = TransPort;

@@ -2,7 +2,7 @@
 const TIMEOUT_MAX = 500;
 const TIMEOUT_MIN = 50;
 const TIMEOUT_CANDIDATE = 500;
-const HEART_INTERVAL = 10;
+const HEART_INTERVAL = 20;
 
 const CMD_HEART_BEAT = 0;
 const CMD_HEART_BEAT_RSP = 1;
@@ -26,6 +26,9 @@ let Raft = function (transport,logStore,nodeConfig) {
         this.role = role;
         this.role.start();
     };
+    this.dump = ()=>{
+        return this.role.dump();
+    };
 
     this.transport = transport;
     this.logStore = logStore;
@@ -44,6 +47,8 @@ let Raft = function (transport,logStore,nodeConfig) {
  */
 let Follower = function (raft) {
     this.raft = raft;
+
+    this.dump = ()=> {return "I am follower!";};
 
     this.timeout = function () {
         this.raft.changeToCandidate();
@@ -72,12 +77,12 @@ let Follower = function (raft) {
         } else if (message.cmd === CMD_HEART_BEAT) {
 
         } else {
-            console.log('warning wrong msg! ignored');
+            console.log('warning wrong follower msg:' + message.cmd + ' ! ignored');
         }
     };
 
     this.start = () => this.startTimer();
-    this.stop = () => clearTimeout(this.timer);
+    this.stop = () =>{ clearTimeout(this.timer);}
     this.messageReceived = (from, message) => {
         clearTimeout(this.timer);
         this.startTimer();
@@ -93,11 +98,16 @@ let Follower = function (raft) {
 let Leader = function (raft) {
     this.raft = raft;
 
+
+    this.dump = ()=> {return "I am leader!";};
+
     this.sendHeart = (node) => {
-        this.raft.transport.sendMessage(node.address, {
-            cmd: CMD_HEART_BEAT,
-            data: {}
-        });
+        if(node.address !== this.raft.transport.address) {
+            this.raft.transport.sendMessage(node.address, {
+                cmd: CMD_HEART_BEAT,
+                data: {}
+            });
+        }
     };
     this.handleMessage = function (from, message) {
         if (message.cmd === CMD_HEART_BEAT_RSP) {
@@ -111,8 +121,11 @@ let Leader = function (raft) {
         }
     };
 
-    this.start = () => this.timer = setInterval(() => this.raft.nodeConfig.nodes.forEach(this.sendHeart), HEART_INTERVAL);
-    this.stop = () => clearInterval(this.timer);
+    this.start = () => {
+        this.timer = setInterval(() => this.raft.nodeConfig.nodes.forEach(this.sendHeart), HEART_INTERVAL);
+        console.log("I am become leader address " + this.raft.transport.address);
+    }
+    this.stop = () =>{ clearInterval(this.timer); console.log('exit leader!!');};
     this.messageReceived = function (from, message) {
         this.handleMessage(from, message);
     };
@@ -125,39 +138,45 @@ let Leader = function (raft) {
 let Candidate = function (raft) {
     this.raft = raft;
     this.voteNumber = 1;
+    this.term = raft.term;
 
+
+    this.dump = ()=> {return "I am candidate!";};
 
     this.handleMessage = (from, message) => {
         if (message.cmd === CMD_ELECT_RSP) {
-            if (message.data.support === 1 && this.raft.term === message.data.term) {
+            if (message.data.support === 1 && this.term === message.data.term) {
                 this.voteNumber += 1;
             }
         } else if (message.cmd === CMD_HEART_BEAT) {
             this.raft.changeToFollower();
         } else {
-            console.log('Warning error candidate message! Ignored!');
+            console.log('Warning error candidate message : ' + message.cmd + ' ! Ignored!');
         }
     };
     this.electTimeout = () => {
         // more than half of nodes support me
         if (this.voteNumber * 2 > this.raft.nodeConfig.nodeNumbers) {
-            this.raft.changeToLeader();
+            this.raft.term = this.term;
+            this.raft.changeToLeader(this.term);
         } else {
             this.start();
         }
     };
     this.sendVoteRequest = (node) => {
+        if(node.address === this.raft.transport.address) return;
         this.raft.transport.sendMessage(node.address, {
             cmd: CMD_ELECT_REQUEST,
             data: {
-                term: this.raft.term, msgTerm: this.raft.logStore.msgTerm, msgIndex: this.raft.logStore.msgIndex
+                term: this.term, msgTerm: this.raft.logStore.msgTerm, msgIndex: this.raft.logStore.msgIndex
             }
         });
     };
 
     this.start = () => {
+
         //increase term
-        this.raft.term += 1;
+        this.term += 1;
         //start elect timeout timer
         const candidate = this;
         this.timer = setTimeout(()=>candidate.electTimeout(), TIMEOUT_CANDIDATE);
