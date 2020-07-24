@@ -8,6 +8,8 @@ const CMD_HEART_BEAT = 0;
 const CMD_HEART_BEAT_RSP = 1;
 const CMD_ELECT_REQUEST = 2;
 const CMD_ELECT_RSP = 3;
+const CMD_QUERY_LOG_INDEX = 4;
+const CMD_QUERY_LOG_INDEX_RSP = 5;
 
 /**
  * Raft
@@ -77,14 +79,20 @@ let Follower = function (raft) {
         if (message.cmd === CMD_ELECT_REQUEST) {
             this.elect(from, message);
         } else if (message.cmd === CMD_HEART_BEAT) {
-
-        } else {
+            let logs = message.data.logs;
+            this.raft.logStore.addLog(logs);
+        } else if(message.cmd === CMD_QUERY_LOG_INDEX){
+            this.raft.transport.sendMessage(from,{
+                cmd: CMD_QUERY_LOG_INDEX_RSP,
+                data:this.raft.logStore.lastCommitted()
+            });
+        }else {
             console.log('warning wrong follower msg:' + message.cmd + ' ! ignored');
         }
     };
 
     this.start = () => this.startTimer();
-    this.stop = () =>{ clearTimeout(this.timer);}
+    this.stop = () =>{ clearTimeout(this.timer);};
     this.messageReceived = (from, message) => {
         clearTimeout(this.timer);
         this.startTimer();
@@ -100,33 +108,58 @@ let Follower = function (raft) {
 let Leader = function (raft) {
     this.raft = raft;
 
+    this.followers = [];
+    this.raft.nodeConfig.nodes.filter((node)=>node.address !==raft.transport.address)
+        .map((node)=>this.followers.push({address:node.address,term:-1,logIndex:-1}));
 
     this.dump = ()=> {return "I am leader!";};
 
-    this.sendHeart = (node) => {
-        if(node.address !== this.raft.transport.address) {
-            this.raft.transport.sendMessage(node.address, {
-                cmd: CMD_HEART_BEAT,
-                data: {}
-            });
+    this.updateFollower = (address,term,logIndex)=> {
+        for(let i = 0 ; i < this.followers.length;i++){
+            if(address === this.followers[i].address){
+                this.followers[i].term = term;
+                this.followers[i].logIndex = logIndex;
+                break;
+            }
         }
+    };
+
+    this.sendHeart = (follower) => {
+        let appendLogs = [];
+        if(follower.term === -1){
+            this.raft.transport.sendMessage(follower.address,{
+                cmd: CMD_QUERY_LOG_INDEX,
+                data:{}
+            });
+        }else{
+            appendLogs = this.raft.logStore.getAppendLogs(follower.term,follower.logIndex);
+        }
+
+        this.raft.transport.sendMessage(follower.address, {
+            cmd: CMD_HEART_BEAT,
+            data: {logs:appendLogs}
+        });
+
     };
     this.handleMessage = function (from, message) {
         if (message.cmd === CMD_HEART_BEAT_RSP) {
-
+            this.updateFollower(from,message.data.term,message.data.logIndex);
         } else if (message.cmd === CMD_HEART_BEAT) {
             this.raft.changeToFollower();
         } else if (message.cmd === CMD_ELECT_REQUEST) {
 
-        } else {
-            console.log('Warning error leader message! Ignored!');
+        } else if(message.cmd === CMD_QUERY_LOG_INDEX_RSP){
+            let lastCommittedLog = message.data;
+
+        }else {
+            console.log('Warning error leader message ' + message.cmd + '! Ignored!');
         }
     };
 
     this.start = () => {
-        this.timer = setInterval(() => this.raft.nodeConfig.nodes.forEach(this.sendHeart), HEART_INTERVAL);
+        this.timer = setInterval(() => this.followers.forEach(this.sendHeart), HEART_INTERVAL);
         console.log("I am become leader address " + this.raft.transport.address);
-    }
+    };
     this.stop = () =>{ clearInterval(this.timer); console.log('exit leader!!');};
     this.messageReceived = function (from, message) {
         this.handleMessage(from, message);

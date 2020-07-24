@@ -12,8 +12,26 @@ class LogStore{
         return this.logs.length === 0 ? {term: 0,logIndex: 0} : this.logs[this.logs.length-1];
     }
 
-    addLog (term,logIndex,data){
+    lastCommitted(){
+        for(let i = this.logs.length - 1; i >=0 ;i--){
+            if(this.logs[i].committed) return {term: this.logs[i].term,logIndex: this.logs[i].logIndex};
+        }
+        return  {term: -1,logIndex: -1};
+    }
+
+    addLog (logs){
+        for(let i = 0 ; i < logs.length ;i++){
+            let log = logs[i];
+            if(this.binarySearch(log.term,log.logIndex) === -1){
+                this.removeLogAfter()
+            }
+        }
         this.logs.push({term:term,logIndex:logIndex,data:data,committed:false});
+    }
+
+    getAppendLogs(term,logIndex){
+        let i = this.binarySearch(term,logIndex) ;
+        return this.logs.slice(i+1);
     }
 
     commitLog(term,logIndex){
@@ -21,7 +39,8 @@ class LogStore{
         if(i === -1){
             console.log('logStore error : commit log not in store!!');
         }else{
-            this.logs[i].committed = true;
+            //when log committed ,commit all uncommitted logs before.
+            for(;i>=0 && !this.logs[i].committed;i-- ) this.logs[i].committed = true;
         }
     }
 
