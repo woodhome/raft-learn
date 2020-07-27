@@ -23,10 +23,9 @@ class LogStore{
         for(let i = 0 ; i < logs.length ;i++){
             let log = logs[i];
             if(this.binarySearch(log.term,log.logIndex) === -1){
-                this.removeLogAfter()
             }
+            this.logs.push({term:log.term,logIndex:log.logIndex,data:log.data,committed:false});
         }
-        this.logs.push({term:term,logIndex:logIndex,data:data,committed:false});
     }
 
     getAppendLogs(term,logIndex){

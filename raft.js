@@ -18,48 +18,57 @@ const CMD_QUERY_LOG_INDEX_RSP = 5;
  * @param nodeConfig
  * @constructor
  */
-let Raft = function (transport,logStore,nodeConfig) {
+class Raft {
+    constructor (transport,logStore,nodeConfig) {
+        this.transport = transport;
+        this.logStore = logStore;
+        this.term = logStore.lastLog().term ;
+        this.role = new Follower(this);
+        this.nodeConfig = nodeConfig;
+        this.transport.onMessage = (from,message)=>this.role.messageReceived(from,message);
+        this.role.start();
+    }
 
-    this.changeToLeader = ()=>this.changeTo(new Leader(this));
-    this.changeToFollower = ()=>this.changeTo(new Follower(this));
-    this.changeToCandidate = ()=>this.changeTo(new Candidate(this));
-    this.changeTo = function(role){
+    changeToLeader (){
+        this.changeTo(new Leader(this));
+    }
+    changeToFollower (){
+        this.changeTo(new Follower(this));
+    }
+    changeToCandidate (){
+        this.changeTo(new Candidate(this));
+    }
+    changeTo (role){
         this.role.stop();
         this.role = role;
         this.role.start();
-    };
-    this.dump = ()=>{
+    }
+    dump (){
         return this.role.dump();
     };
-
-    this.transport = transport;
-    this.logStore = logStore;
-    this.term = logStore.lastLog().term ;
-    this.role = new Follower(this);
-    this.nodeConfig = nodeConfig;
-    this.transport.onMessage = (from,message)=>this.role.messageReceived(from,message);
-
-    this.role.start();
-};
+}
 
 /**
  * Follower
  * @param raft
  * @constructor
  */
-let Follower = function (raft) {
-    this.raft = raft;
+class Follower   {
+    constructor (raft) {
+        this.raft = raft;
+    }
 
-    this.dump = ()=> {return "I am follower!";};
-
-    this.timeout = function () {
+    dump () {
+        return "I am follower!";
+    }
+    timeout () {
         this.raft.changeToCandidate();
-    };
-    this.startTimer = (base = TIMEOUT_MIN) => {
+    }
+    startTimer(base = TIMEOUT_MIN) {
         const follower = this;
         this.timer = setTimeout(()=>follower.timeout(), Math.random() * (TIMEOUT_MAX - TIMEOUT_MIN) + base);
-    };
-    this.elect = (from, message) => {
+    }
+    elect(from, message) {
         let lastLog = this.raft.logStore.lastLog();
         if (message.data.term > this.raft.term && (message.data.msgTerm > lastLog.term ||
             (message.data.msgTerm === lastLog.term && message.data.msgIndex >= lastLog.logIndex))) {
@@ -75,7 +84,7 @@ let Follower = function (raft) {
         }
     };
 
-    this.handleMessage = (from, message) => {
+    handleMessage (from, message) {
         if (message.cmd === CMD_ELECT_REQUEST) {
             this.elect(from, message);
         } else if (message.cmd === CMD_HEART_BEAT) {
@@ -91,30 +100,35 @@ let Follower = function (raft) {
         }
     };
 
-    this.start = () => this.startTimer();
-    this.stop = () =>{ clearTimeout(this.timer);};
-    this.messageReceived = (from, message) => {
+    start () {
+        this.startTimer();
+    }
+    stop() {
+        clearTimeout(this.timer);
+    }
+    messageReceived (from, message) {
         clearTimeout(this.timer);
         this.startTimer();
         this.handleMessage(from, message);
     };
-};
+}
 
 /**
  * Leader
  * @param raft
  * @constructor
  */
-let Leader = function (raft) {
-    this.raft = raft;
+class Leader  {
+    constructor(raft) {
+        this.raft = raft;
 
-    this.followers = [];
-    this.raft.nodeConfig.nodes.filter((node)=>node.address !==raft.transport.address)
-        .map((node)=>this.followers.push({address:node.address,term:-1,logIndex:-1}));
+        this.followers = [];
+        this.raft.nodeConfig.nodes.filter((node) => node.address !== raft.transport.address)
+            .map((node) => this.followers.push({address: node.address, term: -1, logIndex: -1}));
+    }
+    dump () {return "I am leader!";}
 
-    this.dump = ()=> {return "I am leader!";};
-
-    this.updateFollower = (address,term,logIndex)=> {
+    updateFollower (address,term,logIndex){
         for(let i = 0 ; i < this.followers.length;i++){
             if(address === this.followers[i].address){
                 this.followers[i].term = term;
@@ -122,9 +136,9 @@ let Leader = function (raft) {
                 break;
             }
         }
-    };
+    }
 
-    this.sendHeart = (follower) => {
+    sendHeart (follower) {
         let appendLogs = [];
         if(follower.term === -1){
             this.raft.transport.sendMessage(follower.address,{
@@ -140,8 +154,8 @@ let Leader = function (raft) {
             data: {logs:appendLogs}
         });
 
-    };
-    this.handleMessage = function (from, message) {
+    }
+    handleMessage (from, message) {
         if (message.cmd === CMD_HEART_BEAT_RSP) {
             this.updateFollower(from,message.data.term,message.data.logIndex);
         } else if (message.cmd === CMD_HEART_BEAT) {
@@ -156,29 +170,34 @@ let Leader = function (raft) {
         }
     };
 
-    this.start = () => {
-        this.timer = setInterval(() => this.followers.forEach(this.sendHeart), HEART_INTERVAL);
+    start (){
+        this.timer = setInterval(() => this.followers.forEach((follower)=>this.sendHeart(follower)), HEART_INTERVAL);
         console.log("I am become leader address " + this.raft.transport.address);
-    };
-    this.stop = () =>{ clearInterval(this.timer); console.log('exit leader!!');};
-    this.messageReceived = function (from, message) {
+    }
+    stop (){
+        clearInterval(this.timer); console.log('exit leader!!');
+    }
+    messageReceived (from, message) {
         this.handleMessage(from, message);
-    };
+    }
 };
 /**
  * Candidate
  * @param raft
  * @constructor
  */
-let Candidate = function (raft) {
-    this.raft = raft;
-    this.voteNumber = 1;
-    this.term = raft.term;
+class Candidate{
+    constructor(raft) {
+        this.raft = raft;
+        this.voteNumber = 1;
+        this.term = raft.term;
+    }
 
+    dump () {
+        return "I am candidate!";
+    }
 
-    this.dump = ()=> {return "I am candidate!";};
-
-    this.handleMessage = (from, message) => {
+    handleMessage (from, message){
         if (message.cmd === CMD_ELECT_RSP) {
             if (message.data.support === 1 && this.term === message.data.term) {
                 this.voteNumber += 1;
@@ -188,8 +207,8 @@ let Candidate = function (raft) {
         } else {
             console.log('Warning error candidate message : ' + message.cmd + ' ! Ignored!');
         }
-    };
-    this.electTimeout = () => {
+    }
+    electTimeout () {
         // more than half of nodes support me
         if (this.voteNumber * 2 > this.raft.nodeConfig.nodeNumbers) {
             this.raft.term = this.term;
@@ -197,8 +216,8 @@ let Candidate = function (raft) {
         } else {
             this.start();
         }
-    };
-    this.sendVoteRequest = (node) => {
+    }
+    sendVoteRequest (node) {
         if(node.address === this.raft.transport.address) return;
         let lastLog = this.raft.logStore.lastLog();
         this.raft.transport.sendMessage(node.address, {
@@ -207,9 +226,9 @@ let Candidate = function (raft) {
                 term: this.term, msgTerm: lastLog.term, msgIndex: lastLog.logIndex
             }
         });
-    };
+    }
 
-    this.start = () => {
+    start() {
 
         //increase term
         this.term += 1;
@@ -218,12 +237,14 @@ let Candidate = function (raft) {
         this.timer = setTimeout(()=>candidate.electTimeout(), TIMEOUT_CANDIDATE);
 
         //send vote request to all nodes
-        this.raft.nodeConfig.nodes.forEach(this.sendVoteRequest);
-    };
-    this.stop = () => clearTimeout(this.timer);
-    this.messageReceived = function (from, message) {
+        this.raft.nodeConfig.nodes.forEach((node)=>this.sendVoteRequest(node));
+    }
+    stop (){
+        clearTimeout(this.timer);
+    }
+    messageReceived(from, message) {
         this.handleMessage(from, message);
-    };
-};
+    }
+}
 
 exports.Raft = Raft;
