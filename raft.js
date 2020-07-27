@@ -23,6 +23,7 @@ class Raft {
         this.transport = transport;
         this.logStore = logStore;
         this.term = logStore.lastLog().term ;
+        this.logIndex = 0;
         this.role = new Follower(this);
         this.nodeConfig = nodeConfig;
         this.transport.onMessage = (from,message)=>this.role.messageReceived(from,message);
@@ -43,8 +44,11 @@ class Raft {
         this.role = role;
         this.role.start();
     }
+    request(data){
+        return this.role.request(data);
+    }
     dump (){
-        return this.role.dump();
+        return this.role.dump() + JSON.stringify(this.logStore);
     };
 }
 
@@ -56,8 +60,11 @@ class Raft {
 class Follower   {
     constructor (raft) {
         this.raft = raft;
+        this.leader = null;
     }
-
+    request(data){
+        return {leader:this.leader,error:-1};
+    }
     dump () {
         return "I am follower!";
     }
@@ -88,8 +95,23 @@ class Follower   {
         if (message.cmd === CMD_ELECT_REQUEST) {
             this.elect(from, message);
         } else if (message.cmd === CMD_HEART_BEAT) {
+            //append logs
             let logs = message.data.logs;
+            this.leader = from;
             this.raft.logStore.addLog(logs);
+
+            //commit log
+            let committed = message.data.committed;
+            this.raft.logStore.commitLog(committed.term,committed.logIndex);
+
+            //response
+            let log = logs.length > 0 ? logs[logs.length - 1] : null;
+            let data = log ? {term:log.term,logIndex:log.logIndex}:null;
+            this.raft.transport.sendMessage(from,{
+                cmd: CMD_HEART_BEAT_RSP,
+                data:data
+            });
+
         } else if(message.cmd === CMD_QUERY_LOG_INDEX){
             this.raft.transport.sendMessage(from,{
                 cmd: CMD_QUERY_LOG_INDEX_RSP,
@@ -121,11 +143,16 @@ class Follower   {
 class Leader  {
     constructor(raft) {
         this.raft = raft;
-
+        this.raft.logIndex = 0;
         this.followers = [];
         this.raft.nodeConfig.nodes.filter((node) => node.address !== raft.transport.address)
             .map((node) => this.followers.push({address: node.address, term: -1, logIndex: -1}));
     }
+    request(data){
+        this.raft.logStore.addLog([{data:data,term:this.raft.term,logIndex: this.raft.logIndex++}]);
+        return {error:0};
+    }
+
     dump () {return "I am leader!";}
 
     updateFollower (address,term,logIndex){
@@ -136,6 +163,19 @@ class Leader  {
                 break;
             }
         }
+
+        this.followers.sort((a,b)=>{
+            if(a.term < b.term || (a.term === b.term && a.logIndex < b.logIndex)){
+                return -1;
+            }else if(a.term === b.term && a.logIndex === b.logIndex){
+                return 0;
+            }
+            return 1;
+        });
+        //commit the log that received rsp fom major followers.
+        let major = this.followers[Math.ceil((this.followers.length + 1)/ 2)];
+        this.raft.logStore.commitLog(major.term,major.logIndex);
+
     }
 
     sendHeart (follower) {
@@ -148,23 +188,25 @@ class Leader  {
         }else{
             appendLogs = this.raft.logStore.getAppendLogs(follower.term,follower.logIndex);
         }
-
+        let lastCommitted = this.raft.logStore.lastCommitted();
         this.raft.transport.sendMessage(follower.address, {
             cmd: CMD_HEART_BEAT,
-            data: {logs:appendLogs}
+            data: {logs:appendLogs,committed:lastCommitted}
         });
 
     }
     handleMessage (from, message) {
         if (message.cmd === CMD_HEART_BEAT_RSP) {
-            this.updateFollower(from,message.data.term,message.data.logIndex);
+            if(message.data) {
+                this.updateFollower(from, message.data.term, message.data.logIndex);
+            }
         } else if (message.cmd === CMD_HEART_BEAT) {
             this.raft.changeToFollower();
         } else if (message.cmd === CMD_ELECT_REQUEST) {
 
         } else if(message.cmd === CMD_QUERY_LOG_INDEX_RSP){
             let lastCommittedLog = message.data;
-
+            this.updateFollower(from,lastCommittedLog.term,lastCommittedLog.logIndex);
         }else {
             console.log('Warning error leader message ' + message.cmd + '! Ignored!');
         }
@@ -191,6 +233,10 @@ class Candidate{
         this.raft = raft;
         this.voteNumber = 1;
         this.term = raft.term;
+    }
+
+    request(data){
+        return {error:-2};
     }
 
     dump () {

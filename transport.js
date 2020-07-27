@@ -1,18 +1,17 @@
 
 let transportMaps = {};
 
-let TransPort = function (address) {
-    if (transportMaps[address]) {
-        throw "Oh no repeated address!!!";
+class TransPort  {
+    constructor (address) {
+        if (transportMaps[address]) {
+            throw "Oh no repeated address!!!";
+        }
+        transportMaps[address] = this;
+        this.address = address;
+        this.onMessage = ()=>{};
     }
-    this.onMessage = () => {
+    sendMessage (address, message) {
+        setTimeout(() => transportMaps[address].onMessage(this.address, message), Math.random() * 60);
     };
-    transportMaps[address] = this;
-    this.address = address;
-
-
-    this.sendMessage = (address, message) => {
-        setTimeout(() => transportMaps[address].onMessage(this.address, message), Math.random() * 10);
-    };
-};
+}
 exports.TransPort = TransPort;

@@ -16,15 +16,15 @@ class LogStore{
         for(let i = this.logs.length - 1; i >=0 ;i--){
             if(this.logs[i].committed) return {term: this.logs[i].term,logIndex: this.logs[i].logIndex};
         }
-        return  {term: -1,logIndex: -1};
+        return  {term: 0,logIndex: 0};
     }
 
     addLog (logs){
         for(let i = 0 ; i < logs.length ;i++){
             let log = logs[i];
-            if(this.binarySearch(log.term,log.logIndex) === -1){
+            if(this.binarySearch(log.term,log.logIndex) === -1) {
+                this.logs.push({term: log.term, logIndex: log.logIndex, data: log.data, committed: false});
             }
-            this.logs.push({term:log.term,logIndex:log.logIndex,data:log.data,committed:false});
         }
     }
 
@@ -60,7 +60,7 @@ class LogStore{
     binarySearch(term,logIndex){
         let high = this.logs.length-1,low=0;
         while(low <= high){
-            let mid = low + (high - low) / 2;
+            let mid = low + Math.ceil((high - low) / 2 ) ;
             let log = this.logs[mid];
             if(log.term === term && log.logIndex === logIndex){
                 return mid;
